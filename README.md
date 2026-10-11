@@ -1,0 +1,2 @@
+# seqent
+Terminal Music Synthesis
