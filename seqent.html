@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Techno Terminal Sequencer</title>
+    
+    <style>
+        body, html {
+            margin: 0; 
+            padding: 0; 
+            height: 100%;
+            background-color: #282a36; /* Dracula Background */
+            color: #ff79c6; /* Dracula Pink */
+            font-family: 'Courier New', Courier, monospace;
+            overflow-x: hidden;
+            font-size: 16px;
+        }
+
+        #terminal-container {
+            padding: 20px;
+            box-sizing: border-box;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            text-shadow: 0 0 5px rgba(255, 121, 198, 0.4); /* Pink glow */
+            position: relative;
+            z-index: 10;
+        }
+
+        #output {
+            flex-grow: 1;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            margin-bottom: 10px;
+            scrollbar-width: none; /* Firefox */
+        }
+
+        #output::-webkit-scrollbar {
+            display: none; /* Chrome/Safari */
+        }
+
+        #cmd-form {
+            display: flex;
+            margin: 0; 
+            padding: 0;
+            align-items: center;
+        }
+
+        #cmd-line {
+            background: transparent;
+            border: none;
+            color: inherit;
+            font: inherit;
+            outline: none;
+            flex-grow: 1;
+            margin-left: 10px;
+            text-shadow: inherit;
+        }
+
+        /* Subtle CRT scanline effect */
+        body::after {
+            content: " ";
+            display: block;
+            position: absolute;
+            top: 0; left: 0; bottom: 0; right: 0;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), 
+                        linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+            z-index: 20;
+            background-size: 100% 2px, 3px 100%;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+<div id="terminal-container">
+    <div id="output">SYSTEM INIT... 
+Web Audio Engine: STANDBY
+Techno Kit Loaded (kick, snare, clap, chh, ohh, toml, tomm, tomh, ride, crash)
+Type 'help' for commands.
+</div>
+    <form id="cmd-form">
+        <span style="font-weight: bold; white-space: pre;"> [synth]───[»] </span>
+        <input type="text" id="cmd-line" autocomplete="off" spellcheck="false" autofocus>
+    </form>
+</div>
+
+<script>
+    const outputDiv = document.getElementById('output');
+    const cmdInput = document.getElementById('cmd-line');
+    const terminalContainer = document.getElementById('terminal-container');
+    
+    // Keep focus on input when clicking anywhere in the terminal
+    terminalContainer.addEventListener('click', () => cmdInput.focus());
+
+    // Command History
+    const history = [];
+    let historyIndex = -1;
+
+    function printToTerminal(text) {
+        outputDiv.textContent += '\n' + text;
+        outputDiv.scrollTop = outputDiv.scrollHeight;
+    }
+
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    
+    // Synthesis Tuning (All lowercase keys for parser compatibility)
+    const tune = {
+        tempo: 130,
+        kickpitch: 120, 
+        kickdrop: 45, 
+        kickdecay: 0.5,
+        snarepitch: 200,   
+        snarefilter: 1500, 
+        tomlow: 80,        
+        tommed: 120,       
+        tomhigh: 160,      
+        clapfilter: 1500,
+        hatfilter: 8000,
+        ridedecay: 1.2
+    };
+
+    // 10 Instruments Setup
+    const instNames = ['kick', 'snare', 'clap', 'chh', 'ohh', 'toml', 'tomm', 'tomh', 'ride', 'crash'];
+    const patterns = {};
+    instNames.forEach(i => patterns[i] = Array(16).fill(0));
+    
+    const activeCA = {};
+
+    function playKick(time) {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain); gain.connect(audioCtx.destination);
+        
+        // Pitch envelope (Thump)
+        osc.frequency.setValueAtTime(tune.kickpitch, time);
+        osc.frequency.exponentialRampToValueAtTime(tune.kickdrop, time + 0.1);
+        
+        // Amplitude envelope
+        gain.gain.setValueAtTime(1, time);
+        gain.gain.exponentialRampToValueAtTime(0.01, time + tune.kickdecay);
+        
+        osc.start(time); osc.stop(time + tune.kickdecay);
+    }
+
+    function playSnare(time) {
+        // Noise snap
+        const noiseBuffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.2, audioCtx.sampleRate);
+        for (let i = 0; i < noiseBuffer.length; i++) noiseBuffer.getChannelData(0)[i] = Math.random() * 2 - 1;
+        const noise = audioCtx.createBufferSource(); noise.buffer = noiseBuffer;
+        
+        const filter = audioCtx.createBiquadFilter(); 
+        filter.type = 'highpass'; 
+        filter.frequency.value = tune.snarefilter; 
+        
+        const gain = audioCtx.createGain();
+        noise.connect(filter); filter.connect(gain); gain.connect(audioCtx.destination);
+        gain.gain.setValueAtTime(0.7, time); gain.gain.exponentialRampToValueAtTime(0.01, time + 0.2);
+        
+        // Tonal body
+        const osc = audioCtx.createOscillator(); const oscGain = audioCtx.createGain();
+        osc.type = 'triangle'; 
+        osc.frequency.setValueAtTime(tune.snarepitch, time); 
+        
+        oscGain.gain.setValueAtTime(0.5, time); oscGain.gain.exponentialRampToValueAtTime(0.01, time + 0.1);
+        osc.connect(oscGain); oscGain.connect(audioCtx.destination);
+
+        noise.start(time); osc.start(time);
+        noise.stop(time + 0.2); osc.stop(time + 0.2);
+    }
+
+    function playClap(time) {
+        const noiseBuffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.4, audioCtx.sampleRate);
+        for (let i = 0; i < noiseBuffer.length; i++) noiseBuffer.getChannelData(0)[i] = Math.random() * 2 - 1;
+        const noise = audioCtx.createBufferSource(); noise.buffer = noiseBuffer;
+        
+        const filter = audioCtx.createBiquadFilter(); filter.type = 'bandpass'; filter.frequency.value = tune.clapfilter;
+        const gain = audioCtx.createGain();
+        
+        // 808 Multi-spike envelope
+        gain.gain.setValueAtTime(0, time);
+        gain.gain.linearRampToValueAtTime(0.8, time + 0.005);
+        gain.gain.linearRampToValueAtTime(0, time + 0.015);
+        gain.gain.linearRampToValueAtTime(0.7, time + 0.02);
+        gain.gain.linearRampToValueAtTime(0, time + 0.03);
+        gain.gain.linearRampToValueAtTime(0.6, time + 0.035);
+        gain.gain.exponentialRampToValueAtTime(0.01, time + 0.3);
+
+        noise.connect(filter); filter.connect(gain); gain.connect(audioCtx.destination);
+        noise.start(time); noise.stop(time + 0.3);
+    }
+
+    function playHat(time, decay) {
+        const noiseBuffer = audioCtx.createBuffer(1, audioCtx.sampleRate * decay, audioCtx.sampleRate);
+        for (let i = 0; i < noiseBuffer.length; i++) noiseBuffer.getChannelData(0)[i] = Math.random() * 2 - 1;
+        const noise = audioCtx.createBufferSource(); noise.buffer = noiseBuffer;
+        const filter = audioCtx.createBiquadFilter(); filter.type = 'highpass'; filter.frequency.value = tune.hatfilter;
+        const gain = audioCtx.createGain();
+        gain.gain.setValueAtTime(0.5, time); gain.gain.exponentialRampToValueAtTime(0.01, time + decay);
+        noise.connect(filter); filter.connect(gain); gain.connect(audioCtx.destination);
+        noise.start(time); noise.stop(time + decay);
+    }
+
+    function playTom(time, freq) {
+        const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
+        osc.connect(gain); gain.connect(audioCtx.destination);
+        osc.frequency.setValueAtTime(freq, time);
+        osc.frequency.exponentialRampToValueAtTime(freq - 20, time + 0.1);
+        gain.gain.setValueAtTime(0.8, time); gain.gain.exponentialRampToValueAtTime(0.01, time + 0.4);
+        osc.start(time); osc.stop(time + 0.4);
+    }
+
+    function playMetallic(time, decay, isCrash) {
+        const freqs = [200, 310, 430, 600]; // Inharmonic square waves
+        const gain = audioCtx.createGain();
+        gain.gain.setValueAtTime(0.4, time); gain.gain.exponentialRampToValueAtTime(0.01, time + decay);
+        
+        const filter = audioCtx.createBiquadFilter(); filter.type = 'highpass'; 
+        filter.frequency.setValueAtTime(isCrash ? 4000 : 6000, time);
+        if (isCrash) filter.frequency.linearRampToValueAtTime(2000, time + decay);
+        
+        freqs.forEach(f => {
+            const osc = audioCtx.createOscillator(); osc.type = 'square';
+            osc.frequency.value = f;
+            osc.connect(filter); osc.start(time); osc.stop(time + decay);
+        });
+        filter.connect(gain); gain.connect(audioCtx.destination);
+    }
+
+    function generateEuclidean(steps, pulses) {
+        const p = []; let bucket = 0;
+        for (let i = 0; i < steps; i++) {
+            bucket += pulses;
+            if (bucket >= steps) { bucket -= steps; p.push(1); } else { p.push(0); }
+        }
+        return p;
+    }
+
+    function evolveCA(currentState, rule) {
+        const steps = currentState.length;
+        let nextGen = Array(steps).fill(0);
+        for (let i = 0; i < steps; i++) {
+            let left = currentState[(i - 1 + steps) % steps];
+            let center = currentState[i];
+            let right = currentState[(i + 1) % steps];
+            let neighborhood = (left << 2) | (center << 1) | right;
+            nextGen[i] = (rule >> neighborhood) & 1;
+        }
+        return nextGen;
+    }
+
+    let currentStep = 0;
+    let nextNoteTime = 0;
+    let timerID;
+
+    function nextNote() {
+        const secondsPerBeat = 60.0 / tune.tempo;
+        nextNoteTime += 0.25 * secondsPerBeat;
+        currentStep++;
+        
+        if (currentStep >= 16) {
+            currentStep = 0;
+            // Evolve Cellular Automata states at the loop boundary
+            for (let inst in activeCA) {
+                activeCA[inst].state = evolveCA(activeCA[inst].state, activeCA[inst].rule);
+                patterns[inst] = activeCA[inst].state;
+            }
+        }
+    }
+
+    function scheduleNote(step, time) {
+        if (patterns['kick'][step]) playKick(time);
+        if (patterns['snare'][step]) playSnare(time);
+        if (patterns['clap'][step]) playClap(time);
+        if (patterns['chh'][step]) playHat(time, 0.05);
+        if (patterns['ohh'][step]) playHat(time, 0.25);
+        if (patterns['toml'][step]) playTom(time, tune.tomlow);
+        if (patterns['tomm'][step]) playTom(time, tune.tommed);
+        if (patterns['tomh'][step]) playTom(time, tune.tomhigh);
+        if (patterns['ride'][step]) playMetallic(time, tune.ridedecay, false);
+        if (patterns['crash'][step]) playMetallic(time, 1.5, true);
+    }
+
+    function scheduler() {
+        while (nextNoteTime < audioCtx.currentTime + 0.1) {
+            scheduleNote(currentStep, nextNoteTime);
+            nextNote();
+        }
+        timerID = setTimeout(scheduler, 25);
+    }
+
+    document.getElementById('cmd-form').addEventListener('submit', function(e) {
+        e.preventDefault();
+        const rawInput = cmdInput.value.trim();
+        if (rawInput === '') return;
+        
+        history.push(rawInput);
+        historyIndex = history.length;
+        cmdInput.value = '';
+        
+        printToTerminal(` [synth]───[»] ${rawInput}`);
+        
+        // Everything parsed in lowercase
+        const args = rawInput.toLowerCase().split(/\s+/);
+        const cmd = args[0];
+
+        switch(cmd) {
+            case 'play':
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+                nextNoteTime = audioCtx.currentTime + 0.05;
+                currentStep = 0;
+                scheduler();
+                printToTerminal("Engine started.");
+                break;
+            case 'stop':
+                clearTimeout(timerID);
+                printToTerminal("Engine halted.");
+                break;
+            case 'bpm':
+                const bpm = parseInt(args[1]);
+                if (!isNaN(bpm)) { tune.tempo = bpm; printToTerminal(`Tempo: ${bpm} BPM`); }
+                break;
+                
+            case 'set':
+                const instSet = args[1]; const steps = parseInt(args[2]); const pulses = parseInt(args[3]);
+                if (instNames.includes(instSet) && !isNaN(steps) && !isNaN(pulses)) {
+                    if (activeCA[instSet]) delete activeCA[instSet]; // Remove CA if manual override
+                    patterns[instSet] = generateEuclidean(steps, pulses);
+                    printToTerminal(`Euclid seq -> ${instSet}: [${patterns[instSet].join('')}]`);
+                } else { printToTerminal("Syntax: set [inst] [steps] [pulses]"); }
+                break;
+                
+            case 'ca':
+                const instCa = args[1]; const rule = parseInt(args[2]);
+                if (instNames.includes(instCa) && !isNaN(rule)) {
+                    let initState = Array(16).fill(0); initState[8] = 1;
+                    activeCA[instCa] = { rule: rule, state: initState };
+                    patterns[instCa] = initState;
+                    printToTerminal(`CA Rule ${rule} active on ${instCa}. Evolves on loop boundary.`);
+                } else { printToTerminal("Syntax: ca [inst] [rule_number]"); }
+                break;
+                
+            case 'tune':
+                const param = args[1]; // e.g. "kickpitch" (already lowercase from parse)
+                const val = parseFloat(args[2]);
+
+                if (tune.hasOwnProperty(param) && !isNaN(val)) {
+                    tune[param] = val;
+                    printToTerminal(`Tuning applied: ${param} -> ${val}`);
+                } else {
+                    printToTerminal("Syntax error: tune [parameter] [value]");
+                    printToTerminal("Available parameters: " + Object.keys(tune).join(', '));
+                }
+                break;
+                
+            case 'clear':
+                outputDiv.textContent = '';
+                break;
+                
+            case 'help':
+                printToTerminal("Commands:\n play, stop, clear\n bpm [val]\n set [inst] [steps] [pulses]\n ca [inst] [rule]\n tune [param] [val]");
+                printToTerminal("Instruments: " + instNames.join(', '));
+                printToTerminal("Tune Params: " + Object.keys(tune).join(', '));
+                break;
+                
+            default:
+                printToTerminal("Unknown command. Type 'help'.");
+        }
+        cmdInput.focus();
+    });
+
+    // History traversal
+    cmdInput.addEventListener('keydown', function(e) {
+        if (e.key === 'ArrowUp') {
+            if (historyIndex > 0) {
+                historyIndex--;
+                cmdInput.value = history[historyIndex];
+            }
+            e.preventDefault();
+        } else if (e.key === 'ArrowDown') {
+            if (historyIndex < history.length - 1) {
+                historyIndex++;
+                cmdInput.value = history[historyIndex];
+            } else {
+                historyIndex = history.length;
+                cmdInput.value = '';
+            }
+            e.preventDefault();
+        }
+    });
+
+</script>
+</body>
+</html>
